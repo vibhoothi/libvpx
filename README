@@ -1,5 +1,8 @@
 README - 20 July 2016
 
+This implementation requires the Tensorflow C API. To install it, please follow the steps at
+https://www.tensorflow.org/install/lang_c
+
 Welcome to the WebM VP8/VP9 Codec SDK!
 
 COMPILING THE APPLICATIONS/LIBRARIES:

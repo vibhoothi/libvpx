@@ -39,8 +39,10 @@ static const struct vp9_token intra_mode_encodings[INTRA_MODES] = {
   { 0, 1 },  { 6, 3 },   { 28, 5 },  { 30, 5 }, { 58, 6 },
   { 59, 6 }, { 126, 7 }, { 127, 7 }, { 62, 6 }, { 2, 2 }
 };
-static const struct vp9_token switchable_interp_encodings[SWITCHABLE_FILTERS] =
-    { { 0, 1 }, { 2, 2 }, { 3, 2 } };
+static const struct vp9_token
+    switchable_interp_encodings[SWITCHABLE_FILTERS] = { { 0, 1 },
+                                                        { 2, 2 },
+                                                        { 3, 2 } };
 static const struct vp9_token partition_encodings[PARTITION_TYPES] = {
   { 0, 1 }, { 2, 2 }, { 6, 3 }, { 7, 3 }
 };
@@ -230,12 +232,11 @@ static void write_ref_frames(const VP9_COMMON *cm, const MACROBLOCKD *const xd,
   }
 }
 
-static void pack_inter_mode_mvs(VP9_COMP *cpi, const MACROBLOCKD *const xd,
-                                const MB_MODE_INFO_EXT *const mbmi_ext,
-                                vpx_writer *w,
-                                unsigned int *const max_mv_magnitude,
-                                int interp_filter_selected[MAX_REF_FRAMES]
-                                                          [SWITCHABLE]) {
+static void pack_inter_mode_mvs(
+    VP9_COMP *cpi, const MACROBLOCKD *const xd,
+    const MB_MODE_INFO_EXT *const mbmi_ext, vpx_writer *w,
+    unsigned int *const max_mv_magnitude,
+    int interp_filter_selected[MAX_REF_FRAMES][SWITCHABLE]) {
   VP9_COMMON *const cm = &cpi->common;
   const nmv_context *nmvc = &cm->fc->nmvc;
   const struct segmentation *const seg = &cm->seg;
@@ -368,13 +369,11 @@ static void write_mb_modes_kf(const VP9_COMMON *cm, const MACROBLOCKD *xd,
   write_intra_mode(w, mi->uv_mode, vp9_kf_uv_mode_prob[mi->mode]);
 }
 
-static void write_modes_b(VP9_COMP *cpi, MACROBLOCKD *const xd,
-                          const TileInfo *const tile, vpx_writer *w,
-                          TOKENEXTRA **tok, const TOKENEXTRA *const tok_end,
-                          int mi_row, int mi_col,
-                          unsigned int *const max_mv_magnitude,
-                          int interp_filter_selected[MAX_REF_FRAMES]
-                                                    [SWITCHABLE]) {
+static void write_modes_b(
+    VP9_COMP *cpi, MACROBLOCKD *const xd, const TileInfo *const tile,
+    vpx_writer *w, TOKENEXTRA **tok, const TOKENEXTRA *const tok_end,
+    int mi_row, int mi_col, unsigned int *const max_mv_magnitude,
+    int interp_filter_selected[MAX_REF_FRAMES][SWITCHABLE]) {
   const VP9_COMMON *const cm = &cpi->common;
   const MB_MODE_INFO_EXT *const mbmi_ext =
       cpi->td.mb.mbmi_ext_base + (mi_row * cm->mi_cols + mi_col);
@@ -409,7 +408,7 @@ static void write_partition(const VP9_COMMON *const cm,
   if (has_rows && has_cols) {
     vp9_write_token(w, vp9_partition_tree, probs, &partition_encodings[p]);
   } else if (!has_rows && has_cols) {
-    assert(p == PARTITION_SPLIT || p == PARTITION_HORZ);
+    //    assert(p == PARTITION_SPLIT || p == PARTITION_HORZ);
     vpx_write(w, p == PARTITION_SPLIT, probs[1]);
   } else if (has_rows && !has_cols) {
     assert(p == PARTITION_SPLIT || p == PARTITION_VERT);
@@ -419,13 +418,12 @@ static void write_partition(const VP9_COMMON *const cm,
   }
 }
 
-static void write_modes_sb(VP9_COMP *cpi, MACROBLOCKD *const xd,
-                           const TileInfo *const tile, vpx_writer *w,
-                           TOKENEXTRA **tok, const TOKENEXTRA *const tok_end,
-                           int mi_row, int mi_col, BLOCK_SIZE bsize,
-                           unsigned int *const max_mv_magnitude,
-                           int interp_filter_selected[MAX_REF_FRAMES]
-                                                     [SWITCHABLE]) {
+static void write_modes_sb(
+    VP9_COMP *cpi, MACROBLOCKD *const xd, const TileInfo *const tile,
+    vpx_writer *w, TOKENEXTRA **tok, const TOKENEXTRA *const tok_end,
+    int mi_row, int mi_col, BLOCK_SIZE bsize,
+    unsigned int *const max_mv_magnitude,
+    int interp_filter_selected[MAX_REF_FRAMES][SWITCHABLE]) {
   const VP9_COMMON *const cm = &cpi->common;
   const int bsl = b_width_log2_lookup[bsize];
   const int bs = (1 << bsl) / 4;
@@ -483,12 +481,11 @@ static void write_modes_sb(VP9_COMP *cpi, MACROBLOCKD *const xd,
     update_partition_context(xd, mi_row, mi_col, subsize, bsize);
 }
 
-static void write_modes(VP9_COMP *cpi, MACROBLOCKD *const xd,
-                        const TileInfo *const tile, vpx_writer *w,
-                        TOKENEXTRA **tok, const TOKENEXTRA *const tok_end,
-                        unsigned int *const max_mv_magnitude,
-                        int interp_filter_selected[MAX_REF_FRAMES]
-                                                  [SWITCHABLE]) {
+static void write_modes(
+    VP9_COMP *cpi, MACROBLOCKD *const xd, const TileInfo *const tile,
+    vpx_writer *w, TOKENEXTRA **tok, const TOKENEXTRA *const tok_end,
+    unsigned int *const max_mv_magnitude,
+    int interp_filter_selected[MAX_REF_FRAMES][SWITCHABLE]) {
   const VP9_COMMON *const cm = &cpi->common;
   int mi_row, mi_col;
 

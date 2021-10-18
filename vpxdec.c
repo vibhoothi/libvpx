@@ -8,6 +8,10 @@
  *  be found in the AUTHORS file in the root of the source tree.
  */
 
+/*
+Copyright (c) 2019 Netflix, Inc., University of Texas at Austin
+*/
+
 #include <assert.h>
 #include <limits.h>
 #include <stdarg.h>
@@ -16,6 +20,7 @@
 #include <string.h>
 
 #include "./vpx_config.h"
+#include "./vpxdec.h"
 
 #if CONFIG_LIBYUV
 #include "third_party/libyuv/include/libyuv/scale.h"
@@ -41,6 +46,7 @@
 #include "./y4menc.h"
 
 static const char *exec_name;
+FILE *blockstats_file = NULL;
 
 struct VpxDecInputContext {
   struct VpxInputContext *vpx_input_ctx;
@@ -92,31 +98,24 @@ static const arg_def_t md5arg =
 static const arg_def_t outbitdeptharg =
     ARG_DEF(NULL, "output-bit-depth", 1, "Output bit-depth for decoded frames");
 #endif
+static const arg_def_t framestatsarg =
+    ARG_DEF(NULL, "framestats", 1, "Output per-frame stats (.csv format)");
+static const arg_def_t blockstatsarg =
+    ARG_DEF(NULL, "blockstats", 1, "Output per block partition info");
 
-static const arg_def_t *all_args[] = { &codecarg,
-                                       &use_yv12,
-                                       &use_i420,
-                                       &flipuvarg,
-                                       &rawvideo,
-                                       &noblitarg,
-                                       &progressarg,
-                                       &limitarg,
-                                       &skiparg,
-                                       &postprocarg,
-                                       &summaryarg,
-                                       &outputfile,
-                                       &threadsarg,
-                                       &frameparallelarg,
-                                       &verbosearg,
-                                       &scalearg,
-                                       &fb_arg,
-                                       &md5arg,
-                                       &error_concealment,
-                                       &continuearg,
+static const arg_def_t *all_args[] = {
+  &codecarg,          &use_yv12,         &use_i420,
+  &flipuvarg,         &rawvideo,         &noblitarg,
+  &progressarg,       &limitarg,         &skiparg,
+  &postprocarg,       &summaryarg,       &outputfile,
+  &threadsarg,        &frameparallelarg, &verbosearg,
+  &scalearg,          &fb_arg,           &md5arg,
+  &error_concealment, &continuearg,
 #if CONFIG_VP9_HIGHBITDEPTH
-                                       &outbitdeptharg,
+  &outbitdeptharg,
 #endif
-                                       NULL };
+  &framestatsarg,     &blockstatsarg,    NULL
+};
 
 #if CONFIG_VP8_DECODER
 static const arg_def_t addnoise_level =
@@ -536,6 +535,7 @@ static int main_loop(int argc, const char **argv_) {
   const char *outfile_pattern = NULL;
   char outfile_name[PATH_MAX] = { 0 };
   FILE *outfile = NULL;
+  FILE *framestats_file = NULL;
 
   MD5Context md5_ctx;
   unsigned char md5_digest[16];
@@ -610,6 +610,19 @@ static int main_loop(int argc, const char **argv_) {
       output_bit_depth = arg_parse_uint(&arg);
     }
 #endif
+    else if (arg_match(&arg, &framestatsarg, argi)) {
+      framestats_file = fopen(arg.val, "w");
+      if (!framestats_file) {
+        die("Error: Could not open --framestats file (%s) for writing.\n",
+            arg.val);
+      }
+    } else if (arg_match(&arg, &blockstatsarg, argi)) {
+      blockstats_file = fopen(arg.val, "w");
+      if (!blockstats_file) {
+        die("Error: Could not open --blockstats file (%s) for writing.\n",
+            arg.val);
+      }
+    }
 #if CONFIG_VP8_DECODER
     else if (arg_match(&arg, &addnoise_level, argi)) {
       postproc = 1;
@@ -1017,6 +1030,8 @@ fail2:
   free(ext_fb_list.ext_fb);
 
   fclose(infile);
+  if (framestats_file) fclose(framestats_file);
+  if (blockstats_file) fclose(blockstats_file);
   free(argv);
 
   return ret;

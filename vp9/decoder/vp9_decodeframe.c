@@ -8,6 +8,10 @@
  *  be found in the AUTHORS file in the root of the source tree.
  */
 
+/*
+Copyright (c) 2019 Netflix, Inc., University of Texas at Austin
+*/
+
 #include <assert.h>
 #include <stdlib.h>  // qsort()
 
@@ -23,7 +27,8 @@
 #include "vpx_ports/mem_ops.h"
 #include "vpx_scale/vpx_scale.h"
 #include "vpx_util/vpx_thread.h"
-
+#include "vpxdec.h"
+FILE *blockstats_file;
 #include "vp9/common/vp9_alloccommon.h"
 #include "vp9/common/vp9_common.h"
 #include "vp9/common/vp9_entropy.h"
@@ -599,8 +604,8 @@ static void dec_build_inter_predictors(
     // Wait until reference block is ready. Pad 7 more pixels as last 7
     // pixels of each superblock row can be changed by next superblock row.
     if (worker != NULL)
-      vp9_frameworker_wait(worker, ref_frame_buf, VPXMAX(0, (y1 + 7))
-                                                      << (plane == 0 ? 0 : 1));
+      vp9_frameworker_wait(worker, ref_frame_buf,
+                           VPXMAX(0, (y1 + 7)) << (plane == 0 ? 0 : 1));
 
     // Skip border extension if block is inside the frame.
     if (x0 < 0 || x0 > frame_width - 1 || x1 < 0 || x1 > frame_width - 1 ||
@@ -625,8 +630,8 @@ static void dec_build_inter_predictors(
     // pixels of each superblock row can be changed by next superblock row.
     if (worker != NULL) {
       const int y1 = (y0_16 + (h - 1) * ys) >> SUBPEL_BITS;
-      vp9_frameworker_wait(worker, ref_frame_buf, VPXMAX(0, (y1 + 7))
-                                                      << (plane == 0 ? 0 : 1));
+      vp9_frameworker_wait(worker, ref_frame_buf,
+                           VPXMAX(0, (y1 + 7)) << (plane == 0 ? 0 : 1));
     }
   }
 #if CONFIG_VP9_HIGHBITDEPTH
@@ -785,10 +790,13 @@ static void decode_block(TileWorkerData *twd, VP9Decoder *const pbi, int mi_row,
   }
 
   vp9_read_mode_info(twd, pbi, mi_row, mi_col, x_mis, y_mis);
-
+  const int qind = vp9_get_qindex(&cm->seg, mi->segment_id, cm->base_qindex);
   if (mi->skip) {
     dec_reset_skip_context(xd);
   }
+  // printf("is inter block %d \n", is_inter_block(mi));
+  if (cm->show_frame == 1)
+    fprintf(blockstats_file, "\t \t %d \t \t %d", qind, is_inter_block(mi));
 
   if (!is_inter_block(mi)) {
     int plane;
@@ -838,8 +846,9 @@ static void decode_block(TileWorkerData *twd, VP9Decoder *const pbi, int mi_row,
                              : xd->mb_to_right_edge >> (5 + pd->subsampling_x));
         const int max_blocks_high =
             num_4x4_h +
-            (xd->mb_to_bottom_edge >= 0 ? 0 : xd->mb_to_bottom_edge >>
-                                                  (5 + pd->subsampling_y));
+            (xd->mb_to_bottom_edge >= 0
+                 ? 0
+                 : xd->mb_to_bottom_edge >> (5 + pd->subsampling_y));
 
         xd->max_blocks_wide = xd->mb_to_right_edge >= 0 ? 0 : max_blocks_wide;
         xd->max_blocks_high = xd->mb_to_bottom_edge >= 0 ? 0 : max_blocks_high;
@@ -914,7 +923,11 @@ static PARTITION_TYPE read_partition(TileWorkerData *twd, int mi_row,
 static void decode_partition(TileWorkerData *twd, VP9Decoder *const pbi,
                              int mi_row, int mi_col, BLOCK_SIZE bsize,
                              int n4x4_l2) {
+  static int n = 0;
   VP9_COMMON *const cm = &pbi->common;
+  const double width = cm->width;
+  const double height = cm->height;
+  const int num_superblocks = (int)(ceil(width / 64) * ceil(height / 64));
   const int n8x8_l2 = n4x4_l2 - 1;
   const int num_8x8_wh = 1 << n8x8_l2;
   const int hbs = num_8x8_wh >> 1;
@@ -924,10 +937,31 @@ static void decode_partition(TileWorkerData *twd, VP9Decoder *const pbi,
   const int has_cols = (mi_col + hbs) < cm->mi_cols;
   MACROBLOCKD *const xd = &twd->xd;
 
-  if (mi_row >= cm->mi_rows || mi_col >= cm->mi_cols) return;
+  if (mi_row >= cm->mi_rows || mi_col >= cm->mi_cols) {
+    if (cm->show_frame == 1)
+      fprintf(blockstats_file, "\n - \t \t - \t \t - \t \t -");
+
+    return;
+  }
 
   partition = read_partition(twd, mi_row, mi_col, has_rows, has_cols, n8x8_l2);
   subsize = subsize_lookup[partition][bsize];  // get_subsize(bsize, partition);
+  FILE *fp;
+  if (bsize == 12) {
+    if (cm->show_frame == 1) {
+      if (partition == 3) {
+        fprintf(blockstats_file, "\n %d \t \t %d \t \t %d \t \t %d",
+                n % num_superblocks + 1, bsize, partition, cm->base_qindex);
+      } else {
+        fprintf(blockstats_file, "\n %d \t \t %d \t \t %d",
+                n % num_superblocks + 1, bsize, partition);
+      }
+    }
+    n++;
+  } else {
+    if (cm->show_frame == 1)
+      fprintf(blockstats_file, "\n - \t \t %d \t \t %d", bsize, partition);
+  }
   if (!hbs) {
     // calculate bmode block dimensions (log 2)
     xd->bmode_blocks_wl = 1 >> !!(partition & PARTITION_VERT);
@@ -940,15 +974,26 @@ static void decode_partition(TileWorkerData *twd, VP9Decoder *const pbi,
         break;
       case PARTITION_HORZ:
         decode_block(twd, pbi, mi_row, mi_col, subsize, n4x4_l2, n8x8_l2);
-        if (has_rows)
+        if (has_rows) {
+          if (cm->show_frame == 1) {
+            fprintf(blockstats_file, "\n");
+            fprintf(blockstats_file, "\t \t \t \t");
+          }
           decode_block(twd, pbi, mi_row + hbs, mi_col, subsize, n4x4_l2,
                        n8x8_l2);
+        }
+
         break;
       case PARTITION_VERT:
         decode_block(twd, pbi, mi_row, mi_col, subsize, n8x8_l2, n4x4_l2);
-        if (has_cols)
+        if (has_cols) {
+          if (cm->show_frame == 1) {
+            fprintf(blockstats_file, "\n");
+            fprintf(blockstats_file, "\t \t \t \t");
+          }
           decode_block(twd, pbi, mi_row, mi_col + hbs, subsize, n8x8_l2,
                        n4x4_l2);
+        }
         break;
       case PARTITION_SPLIT:
         decode_partition(twd, pbi, mi_row, mi_col, subsize, n8x8_l2);
@@ -1379,13 +1424,13 @@ static const uint8_t *decode_tiles(VP9Decoder *pbi, const uint8_t *data,
   TileBuffer tile_buffers[4][1 << 6];
   int tile_row, tile_col;
   int mi_row, mi_col;
-  TileWorkerData *tile_data = NULL;
 
+  TileWorkerData *tile_data = NULL;
   if (cm->lf.filter_level && !cm->skip_loop_filter &&
       pbi->lf_worker.data1 == NULL) {
     CHECK_MEM_ERROR(cm, pbi->lf_worker.data1,
                     vpx_memalign(32, sizeof(LFWorkerData)));
-    pbi->lf_worker.hook = (VPxWorkerHook)vp9_loop_filter_worker;
+    pbi->lf_worker.hook = vp9_loop_filter_worker;
     if (pbi->max_threads > 1 && !winterface->reset(&pbi->lf_worker)) {
       vpx_internal_error(&cm->error, VPX_CODEC_ERROR,
                          "Loop filter thread creation failed");
@@ -1432,7 +1477,10 @@ static const uint8_t *decode_tiles(VP9Decoder *pbi, const uint8_t *data,
       vp9_init_macroblockd(cm, &tile_data->xd, tile_data->dqcoeff);
     }
   }
-
+  if (cm->show_frame == 1) {
+    fprintf(blockstats_file,
+            "Superblock # \t Block Size \t Partition \t Q Index \t Block Type");
+  }
   for (tile_row = 0; tile_row < tile_rows; ++tile_row) {
     TileInfo tile;
     vp9_tile_set_row(&tile, cm, tile_row);
@@ -1474,11 +1522,6 @@ static const uint8_t *decode_tiles(VP9Decoder *pbi, const uint8_t *data,
           winterface->execute(&pbi->lf_worker);
         }
       }
-      // After loopfiltering, the last 7 row pixels in each superblock row may
-      // still be changed by the longest loopfilter of the next superblock
-      // row.
-      if (pbi->frame_parallel_decode)
-        vp9_frameworker_broadcast(pbi->cur_buf, mi_row << MI_BLOCK_SIZE_LOG2);
     }
   }
 
@@ -1494,8 +1537,6 @@ static const uint8_t *decode_tiles(VP9Decoder *pbi, const uint8_t *data,
   // Get last tile data.
   tile_data = pbi->tile_worker_data + tile_cols * tile_rows - 1;
 
-  if (pbi->frame_parallel_decode)
-    vp9_frameworker_broadcast(pbi->cur_buf, INT_MAX);
   return vpx_reader_find_end(&tile_data->bit_reader);
 }
 
@@ -2090,24 +2131,6 @@ void vp9_decode_frame(VP9Decoder *pbi, const uint8_t *data,
     vp9_loop_filter_frame_init(cm, cm->lf.filter_level);
   }
 
-  // If encoded in frame parallel mode, frame context is ready after decoding
-  // the frame header.
-  if (pbi->frame_parallel_decode && cm->frame_parallel_decoding_mode) {
-    VPxWorker *const worker = pbi->frame_worker_owner;
-    FrameWorkerData *const frame_worker_data = worker->data1;
-    if (cm->refresh_frame_context) {
-      context_updated = 1;
-      cm->frame_contexts[cm->frame_context_idx] = *cm->fc;
-    }
-    vp9_frameworker_lock_stats(worker);
-    pbi->cur_buf->row = -1;
-    pbi->cur_buf->col = -1;
-    frame_worker_data->frame_context_ready = 1;
-    // Signal the main thread that context is ready.
-    vp9_frameworker_signal_stats(worker);
-    vp9_frameworker_unlock_stats(worker);
-  }
-
   if (pbi->tile_worker_data == NULL ||
       (tile_cols * tile_rows) != pbi->total_tiles) {
     const int num_tile_workers =
@@ -2119,6 +2142,17 @@ void vp9_decode_frame(VP9Decoder *pbi, const uint8_t *data,
     vpx_free(pbi->tile_worker_data);
     CHECK_MEM_ERROR(cm, pbi->tile_worker_data, vpx_memalign(32, twd_size));
     pbi->total_tiles = tile_rows * tile_cols;
+  }
+
+  static int frame_number = 1;
+  if (cm->show_frame == 1) {
+    fprintf(blockstats_file, "Frame #%d \n", frame_number);
+    fprintf(blockstats_file, "Width: %d Height: %d \n", cm->width, cm->height);
+    fprintf(blockstats_file, "Render Width: %d Render Height: %d \n",
+            cm->render_width, cm->render_height);
+    fprintf(blockstats_file, "Frame Type %d \n", cm->frame_type);
+    fprintf(blockstats_file, "Show Frame %d \n", cm->show_frame);
+    frame_number++;
   }
 
   if (pbi->max_threads > 1 && tile_rows == 1 && tile_cols > 1) {
@@ -2157,4 +2191,5 @@ void vp9_decode_frame(VP9Decoder *pbi, const uint8_t *data,
   // Non frame parallel update frame context here.
   if (cm->refresh_frame_context && !context_updated)
     cm->frame_contexts[cm->frame_context_idx] = *cm->fc;
+  if (cm->show_frame == 1) fprintf(blockstats_file, "\n");
 }
